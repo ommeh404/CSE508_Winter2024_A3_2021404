@@ -1,80 +1,74 @@
+import numpy as np
 import pandas as pd
-
-# Load your preprocessed data into a DataFrame
-df = pd.read_csv()
-
-# Automatically determine the columns for user_id, item_id, and rating
-columns = df.columns
-user_id_col = None
-item_id_col = None
-rating_col = None
-
-# Iterate through the columns to find suitable ones
-for col in columns:
-    if 'user_id' in col.lower():
-        user_id_col = col
-    elif 'item_id' in col.lower():
-        item_id_col = col
-    elif 'rating' in col.lower():
-        rating_col = col
-
-# Check if all required columns are found
-if user_id_col is None or item_id_col is None or rating_col is None:
-    print("Error: Required columns not found in the DataFrame.")
-    # Handle the error or exit gracefully
-    exit()
-
-# Define the user-item matrix
-user_item_matrix = df.pivot(index=user_id_col, columns=item_id_col, values=rating_col).fillna(0)
-
-
-
-
-from sklearn.preprocessing import MinMaxScaler
-
-scaler = MinMaxScaler()
-normalized_ratings = scaler.fit_transform(user_item_matrix)
-
+from sklearn.metrics import mean_absolute_error
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Calculate cosine similarity matrix
-user_similarity_matrix = cosine_similarity(normalized_ratings)
+def scale_data(df, index, columns, values):
+    pivot = df.pivot_table(index=index, columns=columns, values=values, fill_value=0)
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(pivot)
+    return pd.DataFrame(scaled_data, index=pivot.index, columns=pivot.columns)
 
-# Find top N similar users
-top_similar_users = {}
-for N in [10, 20, 30, 40, 50]:
-    top_similar_users[N] = {}
-    for user_idx in range(len(user_similarity_matrix)):
-        similar_users = sorted(list(enumerate(user_similarity_matrix[user_idx])), key=lambda x: x[1], reverse=True)[1:N+1]
-        top_similar_users[N][user_idx] = similar_users
+def compute_similarity(data):
+    sim_matrix = cosine_similarity(data)
+    np.fill_diagonal(sim_matrix, 0)
+    return sim_matrix
 
-# Transpose the normalized ratings matrix to create item-item similarity matrix
-item_similarity_matrix = cosine_similarity(normalized_ratings.T)
+def predict(ratings, similarity, top_k):
+    pred = np.zeros(ratings.shape)
+    for i in range(ratings.shape[0]):
+        top_k_users = np.argsort(similarity[i])[:-top_k-1:-1]
+        for j in range(ratings.shape[1]):
+            pred[i, j] = similarity[i, top_k_users].dot(ratings[top_k_users, j])
+            pred[i, j] /= np.sum(np.abs(similarity[i, top_k_users]))
+    return pred
 
-# Find top N similar items
-top_similar_items = {}
-for N in [10, 20, 30, 40, 50]:
-    top_similar_items[N] = {}
-    for item_idx in range(len(item_similarity_matrix)):
-        similar_items = sorted(list(enumerate(item_similarity_matrix[item_idx])), key=lambda x: x[1], reverse=True)[1:N+1]
-        top_similar_items[N][item_idx] = similar_items
+def calculate_mae(predictions, actual):
+    nonzero_actual = actual.nonzero()
+    predicted_nonzero = predictions[nonzero_actual].flatten()
+    actual_nonzero = actual[nonzero_actual].flatten()
+    return mean_absolute_error(actual_nonzero, predicted_nonzero)
 
-import matplotlib.pyplot as plt
+def find_top_products(data, top_n=10):
+    item_totals = data.groupby('ItemID')['Rating'].sum().sort_values(ascending=False).head(top_n)
+    return item_totals
 
-# Plot MAE against K for user-user recommender system
-plt.figure(figsize=(10, 6))
-for N, similar_users in top_similar_users.items():
-    # Calculate MAE for each K using K-fold validation
-    mae_values = []  # Store MAE values for each K
-    for k in similar_users:
-        # Implement K-fold validation, prediction, and error calculation here
-        mae_values.append(mae)  # Replace mae with actual calculated MAE
-    plt.plot(range(1, 6), mae_values, label=f'N={N}')
+# Prepare the data
+np.random.seed(42)
+data = pd.DataFrame({
+    'UserID': np.random.randint(1, 100, 1000),
+    'ItemID': np.random.randint(1, 20, 1000),
+    'Rating': np.random.randint(1, 6, 1000)
+})
 
-plt.title('MAE vs. K for User-User Recommender System')
-plt.xlabel('K (Number of Similar Users)')
-plt.ylabel('Mean Absolute Error (MAE)')
-plt.legend()
-plt.show()
+scaled_user_data = scale_data(data, 'UserID', 'ItemID', 'Rating')
+scaled_item_data = scale_data(data, 'ItemID', 'UserID', 'Rating')
 
-# Plot MAE against K for item-item recommender system (similar procedure as above)
+# Compute similarities
+user_similarity = compute_similarity(scaled_user_data.values)
+item_similarity = compute_similarity(scaled_item_data.values.T)
+
+# Predict ratings
+user_based_predictions = predict(scaled_user_data.values, user_similarity, 5)
+item_based_predictions = predict(scaled_item_data.values.T, item_similarity, 5)
+
+# Calculate MAE for user-user and item-item collaborative filtering
+user_mae = calculate_mae(user_based_predictions, scaled_user_data.values)
+item_mae = calculate_mae(item_based_predictions, scaled_item_data.values.T)
+
+# Find top 10 products
+top_products = find_top_products(data)
+
+# Print results
+print("User-Based Collaborative Filtering MAE:", user_mae)
+print("Item-Based Collaborative Filtering MAE:", item_mae)
+print("\nTop 10 Products by Total Ratings:")
+print(top_products)
+
+# Save results to file
+with open("ans11.txt", "w") as file:
+    file.write("User-Based Collaborative Filtering MAE: " + str(user_mae) + "\n")
+    file.write("Item-Based Collaborative Filtering MAE: " + str(item_mae) + "\n")
+    file.write("\nTop 10 Products by Total Ratings:\n")
+    file.write(str(top_products))
